@@ -28,3 +28,14 @@ Settings → Jira connection:
 - **Relay URL:** the worker address from step 4
 
 Tap **Save settings**, then **Test connection**. It should show your Jira name, the project and a tick for each field.
+
+## Alternative: deploy from a terminal
+
+With a Cloudflare login (`npx wrangler login`), run in this folder:
+
+```bash
+npm install
+npx wrangler deploy
+```
+
+`wrangler.jsonc` already sets the worker name (`tt-relay`) and the two allowed values.
