@@ -7,9 +7,12 @@ import type { JiraSettings } from './settings';
 
 export class JiraError extends Error {
   status?: number;
-  constructor(message: string, status?: number) {
+  /** Jira's own error text, without our hint. */
+  detail: string;
+  constructor(message: string, status?: number, detail = '') {
     super(message);
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -119,28 +122,61 @@ async function call<T>(j: JiraSettings, method: string, path: string, body?: unk
   }
   if (!res.ok) {
     const d = data as { errorMessages?: string[]; errors?: Record<string, string>; message?: string } | null;
-    const msgs = [...(d?.errorMessages ?? []), ...Object.entries(d?.errors ?? {}).map(([k, v]) => `${k}: ${v}`), ...(d?.message ? [d.message] : [])];
-    const hint =
-      res.status === 401
-        ? 'Token rejected: check the token and its expiry date.'
-        : res.status === 403
-          ? 'No permission: the service account needs access to the project and the scopes read:jira-work and write:jira-work.'
-          : res.status === 404 && path.includes('/project/')
-            ? 'Project not found, or the service account cannot see it.'
-            : '';
-    throw new JiraError([hint, ...msgs].filter(Boolean).join(' ') || `Jira returned ${res.status}`, res.status);
+    const msgs = [
+      ...(d?.errorMessages ?? []),
+      ...Object.entries(d?.errors ?? {}).map(([k, v]) => `${k}: ${v}`),
+      ...(d?.message ? [d.message] : []),
+      ...(typeof data === 'string' && data.length < 300 ? [data] : []),
+    ];
+    const hint = res.status === 401 ? 'Token rejected or scope missing.' : res.status === 403 ? 'Jira refused:' : '';
+    throw new JiraError(
+      [hint, ...msgs, `(HTTP ${res.status})`].filter(Boolean).join(' '),
+      res.status,
+      msgs.join(' ') || `HTTP ${res.status}`,
+    );
   }
   return data as T;
 }
 
-export async function testConnection(j: JiraSettings) {
-  // /myself needs the read:jira-user scope; treat it as optional.
-  const me = await call<{ displayName: string }>(j, 'GET', '/rest/api/2/myself').catch(() => ({ displayName: 'service account' }));
-  const project = await call<{ name: string }>(j, 'GET', `/rest/api/2/project/${encodeURIComponent(j.projectKey)}`);
-  const all = await call<{ id: string; name: string }[]>(j, 'GET', '/rest/api/2/field');
-  const byId = new Map(all.map((f) => [f.id, f.name]));
-  const fields = Object.entries(j.fields).map(([k, id]) => ({ key: k, id, name: byId.get(id) ?? null }));
-  return { user: me.displayName, project: project.name, fields };
+export interface Check {
+  label: string;
+  ok: boolean;
+  info: string;
+}
+
+/** Runs each call the app needs on its own and reports Jira's exact answer, so a failure names its cause. */
+export async function testConnection(j: JiraSettings): Promise<{ checks: Check[]; fields: { key: string; id: string; name: string | null }[] }> {
+  const checks: Check[] = [];
+  const step = async <T>(label: string, fn: () => Promise<T>, info: (r: T) => string): Promise<T | null> => {
+    try {
+      const r = await fn();
+      checks.push({ label, ok: true, info: info(r) });
+      return r;
+    } catch (e) {
+      const err = e as JiraError;
+      checks.push({ label, ok: false, info: `${err.status ? `HTTP ${err.status}: ` : ''}${err.detail || err.message}` });
+      return null;
+    }
+  };
+  const key = encodeURIComponent(j.projectKey);
+  await step('Token (who am I)', () => call<{ displayName: string; accountType?: string }>(j, 'GET', '/rest/api/2/myself'), (r) => `${r.displayName}${r.accountType ? ` (${r.accountType})` : ''}`);
+  await step('See project', () => call<{ name: string }>(j, 'GET', `/rest/api/2/project/${key}`), (r) => r.name);
+  await step(
+    'Project permissions',
+    () => call<{ permissions: Record<string, { havePermission: boolean }> }>(j, 'GET', `/rest/api/2/mypermissions?projectKey=${key}&permissions=BROWSE_PROJECTS,CREATE_ISSUES,EDIT_ISSUES`),
+    (r) => Object.entries(r.permissions).map(([p, v]) => `${p.replace('_ISSUES', '').replace('_PROJECTS', '')} ${v.havePermission ? 'yes' : 'NO'}`).join(', '),
+  );
+  const perm = checks.at(-1);
+  if (perm?.ok && perm.info.includes('NO')) perm.ok = false;
+  const all = await step('Read fields', () => call<{ id: string; name: string }[]>(j, 'GET', '/rest/api/2/field'), (r) => `${r.length} fields`);
+  await step(
+    'Search issues',
+    () => call<{ issues?: unknown[] }>(j, 'GET', `/rest/api/3/search/jql?jql=${encodeURIComponent(`project = "${j.projectKey}"`)}&maxResults=1&fields=summary`),
+    (r) => `${r.issues?.length ?? 0} found`,
+  );
+  const byId = new Map((all ?? []).map((f) => [f.id, f.name]));
+  const fields = all ? Object.entries(j.fields).map(([k, id]) => ({ key: k, id, name: byId.get(id) ?? null })) : [];
+  return { checks, fields };
 }
 
 export async function getIssue(j: JiraSettings, key: string): Promise<{ key: string; summary: string } | null> {

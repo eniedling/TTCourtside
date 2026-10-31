@@ -103,15 +103,24 @@ export function SettingsView({ settings, keepAwake, onSave, onKeepAwake }: {
         </button>
         {testError && <p class="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-200">{testError}</p>}
         {test && (
-          <div class="space-y-1 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-100">
-            <p>Logged in as <b>{test.user}</b>, project <b>{test.project}</b>.</p>
-            <ul class="space-y-0.5">
-              {test.fields.map((f) => (
-                <li key={f.key} class={f.name ? '' : 'text-rose-300'}>
-                  {f.name ? '✓' : '✗'} {fieldLabels[f.key as keyof JiraFieldMap]}: {f.id} {f.name ? `(${f.name})` : 'not found'}
+          <div class="space-y-2 rounded-xl border border-slate-700 bg-slate-950/80 p-3 text-xs">
+            <ul class="space-y-1">
+              {test.checks.map((c) => (
+                <li key={c.label} class={c.ok ? 'text-emerald-200' : 'text-rose-300'}>
+                  {c.ok ? '✓' : '✗'} <b>{c.label}:</b> <span class="break-words">{c.info}</span>
                 </li>
               ))}
             </ul>
+            {test.fields.length > 0 && (
+              <ul class="space-y-0.5 border-t border-slate-800 pt-2 text-slate-300">
+                {test.fields.map((f) => (
+                  <li key={f.key} class={f.name ? '' : 'text-rose-300'}>
+                    {f.name ? '✓' : '✗'} {fieldLabels[f.key as keyof JiraFieldMap]}: {f.id} {f.name ? `(${f.name})` : 'not found'}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p class="text-[11px] text-slate-500">Screenshot this if something fails.</p>
           </div>
         )}
       </div>
