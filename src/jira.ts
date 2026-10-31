@@ -105,6 +105,8 @@ async function call<T>(j: JiraSettings, method: string, path: string, body?: unk
       method,
       headers: {
         Authorization: `Bearer ${j.token.trim()}`,
+        // Jira's cross-site (XSRF) check rejects writes from a browser origin without this header.
+        'X-Atlassian-Token': 'no-check',
         Accept: 'application/json',
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
