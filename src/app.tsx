@@ -20,17 +20,24 @@ import {
   type PlayerKey,
   type PointType,
 } from './engine';
-import { archiveMatch, defaultPrefs, deleteArchived, listArchive, loadCurrent, loadPrefs, requestPersistence, saveCurrent, savePrefs, type Prefs } from './storage';
+import { archiveMatch, defaultPrefs, deleteArchived, listArchive, loadCurrent, loadPrefs, loadSettings, requestPersistence, saveCurrent, savePrefs, saveSettings, type Prefs } from './storage';
+import { defaultSettings, type AppSettings } from './settings';
+import { SettingsView } from './settings-view';
+import { ReflectionModal } from './reflection';
 import { copyText, download, reportText, share, type Format } from './export';
 import { Icon, Modal, Toast, haptic } from './ui';
 import { registerSW } from 'virtual:pwa-register';
 
-type Tab = 'live' | 'stats' | 'history';
+type Tab = 'live' | 'stats' | 'history' | 'settings';
 type ModalName = 'setComplete' | 'settings' | 'reset' | 'export' | 'changeEnds' | null;
 
 const pname = (m: Match, k: PlayerKey) => (k === 'p1' ? m.meta.p1Name : m.meta.p2Name);
 const isStandalone = () =>
   window.matchMedia?.('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+const myDetails = (st: AppSettings): Partial<MatchMeta> => ({
+  ...(st.myName ? { p1Name: st.myName } : {}),
+  ...(st.myClub ? { p1Team: st.myClub } : {}),
+});
 const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
 
 export function App() {
@@ -41,6 +48,9 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [bumpKey, setBumpKey] = useState<{ k: PlayerKey; n: number } | null>(null);
   const [updateReady, setUpdateReady] = useState<null | (() => void)>(null);
+  const [settings, setSettings] = useState<AppSettings>(defaultSettings());
+  const [reflecting, setReflecting] = useState<Match | null>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const toastTimer = useRef<number | undefined>(undefined);
 
   const showToast = (t: string) => {
@@ -52,9 +62,10 @@ export function App() {
   // Load saved state once.
   useEffect(() => {
     (async () => {
-      const [m, p] = await Promise.all([loadCurrent(), loadPrefs()]);
-      setMatch(m ?? createMatch());
+      const [m, p, st] = await Promise.all([loadCurrent(), loadPrefs(), loadSettings()]);
+      setMatch(m ?? createMatch(myDetails(st)));
       setPrefs(p);
+      setSettings(st);
       requestPersistence();
     })();
     const update = registerSW({
@@ -96,6 +107,25 @@ export function App() {
     savePrefs(next);
   };
 
+  const applySettings = (st: AppSettings) => {
+    setSettings(st);
+    saveSettings(st);
+    // A match that has not started yet picks up the new details straight away.
+    if (match && !hasAnyPoints(match)) commit({ ...match, meta: { ...match.meta, ...myDetails(st) } });
+    showToast('Settings saved');
+  };
+
+  /** Open the reflection for a match; the current match is saved to History first so it can be linked to Jira. */
+  const openReflection = async (m: Match) => {
+    await archiveMatch(m);
+    setReflecting(m);
+  };
+  const onReflectionSaved = (m: Match) => {
+    setReflecting(m);
+    setHistoryVersion((v) => v + 1);
+    if (match && m.id === match.id) commit({ ...match, reflection: m.reflection, jira: m.jira });
+  };
+
   if (!match) return <div class="flex h-full items-center justify-center text-slate-500">Loading…</div>;
 
   const left: PlayerKey = prefs.swappedSides ? 'p2' : 'p1';
@@ -128,7 +158,13 @@ export function App() {
 
   const newMatch = async () => {
     if (hasAnyPoints(match)) await archiveMatch(match);
-    commit(createMatch({ ...match.meta, matchDate: todayIso() }, match.bestOf, match.matchInitialServer));
+    commit(
+      createMatch(
+        { league: match.meta.league, venue: match.meta.venue, p1Name: match.meta.p1Name, p1Team: match.meta.p1Team, ...myDetails(settings), matchDate: todayIso() },
+        match.bestOf,
+        match.matchInitialServer,
+      ),
+    );
     setModal(null);
     setTab('live');
     showToast(hasAnyPoints(match) ? 'Previous match saved to History' : 'New match started');
@@ -152,20 +188,22 @@ export function App() {
             else { commit(m2); showToast(`${pname(m2, currentSet(m2).initialServer)} serves first`); }
           }} />
         )}
-        {tab === 'stats' && <StatsView match={match} onExport={() => setModal('export')} onCopy={async () => showToast((await copyText(reportText(match))) ? 'Report copied' : 'Copy not available')} />}
-        {tab === 'history' && <HistoryView current={match} onToast={showToast} />}
+        {tab === 'stats' && <StatsView match={match} onReflect={() => openReflection(match)} onExport={() => setModal('export')} onCopy={async () => showToast((await copyText(reportText(match))) ? 'Report copied' : 'Copy not available')} />}
+        {tab === 'history' && <HistoryView current={match} version={historyVersion} onReflect={(m) => setReflecting(m)} onToast={showToast} />}
+        {tab === 'settings' && <SettingsView settings={settings} keepAwake={prefs.keepAwake} onSave={applySettings} onKeepAwake={(v) => updatePrefs({ keepAwake: v })} />}
       </main>
 
-      <nav class="grid shrink-0 grid-cols-3 gap-2 border-t border-slate-800 bg-slate-900/95 px-3 pb-[max(0.5rem,var(--sab))] pt-1.5">
+      <nav class="grid shrink-0 grid-cols-4 gap-1.5 border-t border-slate-800 bg-slate-900/95 px-3 pb-[max(0.5rem,var(--sab))] pt-1.5">
         {([
           ['live', 'live', 'Live'],
           ['stats', 'chart', 'Stats'],
           ['history', 'list', 'History'],
+          ['settings', 'sliders', 'Settings'],
         ] as const).map(([t, icon, label]) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            class={`flex items-center justify-center gap-2 rounded-xl border py-2 text-xs font-bold ${tab === t ? 'border-sky-500/30 bg-sky-500/15 text-sky-400' : 'border-transparent text-slate-400'}`}
+            class={`flex flex-col items-center justify-center gap-0.5 rounded-xl border py-1.5 text-[11px] font-bold ${tab === t ? 'border-sky-500/30 bg-sky-500/15 text-sky-400' : 'border-transparent text-slate-400'}`}
             aria-current={tab === t ? 'page' : undefined}
           >
             <Icon name={icon} />
@@ -186,17 +224,17 @@ export function App() {
         }}
         onUndo={() => { setModal(null); doUndo(); }}
         onStats={() => { setModal(null); setTab('stats'); }}
+        onReflect={() => { setModal(null); openReflection(match); }}
         onClose={() => setModal(null)}
       />
-      <SettingsModal open={modal === 'settings'} match={match} prefs={prefs} onClose={() => setModal(null)} onSave={(meta, bestOf, keepAwake) => {
+      <SettingsModal open={modal === 'settings'} match={match} onClose={() => setModal(null)} onSave={(meta, bestOf) => {
         commit({ ...match, meta, bestOf });
-        updatePrefs({ keepAwake });
         setModal(null);
         showToast('Match setup saved');
       }} />
       <Modal open={modal === 'reset'} onClose={() => setModal(null)} title="Start a new match?">
         <p class="text-sm text-slate-300">
-          {hasAnyPoints(match) ? 'The current match will be saved to History first. Player names and match details are kept.' : 'No points logged yet. Player names and match details are kept.'}
+          {hasAnyPoints(match) ? 'The current match will be saved to History first. Your details, league and venue are kept; the opponent is cleared.' : 'No points logged yet. Your details, league and venue are kept; the opponent is cleared.'}
         </p>
         <div class="grid grid-cols-2 gap-2">
           <button class="rounded-xl border border-slate-700 bg-slate-800 py-3 text-sm font-bold text-slate-200" onClick={() => setModal(null)}>Cancel</button>
@@ -211,6 +249,14 @@ export function App() {
         </div>
       </Modal>
       <ExportModal open={modal === 'export'} match={match} onClose={() => setModal(null)} onToast={showToast} />
+      <ReflectionModal
+        match={reflecting}
+        settings={settings}
+        onClose={() => setReflecting(null)}
+        onSaved={onReflectionSaved}
+        onToast={showToast}
+        onOpenSettings={() => { setReflecting(null); setTab('settings'); }}
+      />
       <Toast text={toast} />
     </div>
   );
@@ -398,7 +444,7 @@ function StatRows({ match, filter }: { match: Match; filter: 'all' | number }) {
   );
 }
 
-function StatsView({ match, onExport, onCopy }: { match: Match; onExport: () => void; onCopy: () => void }) {
+function StatsView({ match, onReflect, onExport, onCopy }: { match: Match; onReflect: () => void; onExport: () => void; onCopy: () => void }) {
   const [filter, setFilter] = useState<'all' | number>('all');
   const sets = filter === 'all' ? match.sets : [match.sets[filter]].filter(Boolean);
   const pts = useMemo(
@@ -421,6 +467,10 @@ function StatsView({ match, onExport, onCopy }: { match: Match; onExport: () => 
           <button onClick={onCopy} class="press rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-bold text-slate-200">Copy</button>
         </div>
       </div>
+      <button onClick={onReflect} disabled={!hasAnyPoints(match)} class="press flex w-full items-center justify-between rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-left text-sm font-bold text-emerald-200 disabled:opacity-40">
+        <span>Reflection & Save to Jira</span>
+        <span class="text-xs text-emerald-300">{match.jira ? match.jira.key : match.reflection ? 'draft saved' : '→'}</span>
+      </button>
       <div class="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/95 p-4">
         <div class="flex items-center justify-between border-b border-slate-800 pb-3 text-sm font-extrabold">
           <span class="flex items-center gap-2"><span class="h-3 w-3 rounded-full bg-sky-400" />{match.meta.p1Name}</span>
@@ -459,11 +509,11 @@ function StatsView({ match, onExport, onCopy }: { match: Match; onExport: () => 
 
 /* ---------------- History view ---------------- */
 
-function HistoryView({ current, onToast }: { current: Match; onToast: (t: string) => void }) {
+function HistoryView({ current, version, onReflect, onToast }: { current: Match; version: number; onReflect: (m: Match) => void; onToast: (t: string) => void }) {
   const [items, setItems] = useState<Match[] | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const reload = () => listArchive().then(setItems);
-  useEffect(() => { reload(); }, [current]);
+  useEffect(() => { reload(); }, [current, version]);
 
   return (
     <section class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
@@ -493,7 +543,7 @@ function HistoryView({ current, onToast }: { current: Match; onToast: (t: string
               <li key={m.id} class="rounded-xl border border-slate-800 bg-slate-950/85 p-3 text-xs">
                 <div class="flex items-start justify-between gap-2">
                   <div class="min-w-0">
-                    <div class="truncate font-bold text-white">{m.meta.p1Name} vs {m.meta.p2Name}</div>
+                    <div class="truncate font-bold text-white">{m.meta.p1Name} vs {m.meta.p2Name}{m.meta.p2Ttr ? ` (${m.meta.p2Ttr})` : ''}</div>
                     <div class="truncate text-[11px] text-slate-400">
                       <span class="score font-bold text-sky-400">{w.p1}-{w.p2}</span> ({m.sets.map((s) => `${s.p1Score}-${s.p2Score}`).join(', ')}) · {m.meta.matchDate}
                       {win ? '' : ' · unfinished'}
@@ -505,6 +555,10 @@ function HistoryView({ current, onToast }: { current: Match; onToast: (t: string
                     <button class="rounded-lg bg-slate-800 px-2 py-1 text-slate-400" aria-label="Delete" onClick={() => setConfirmId(m.id)}><Icon name="trash" class="h-3.5 w-3.5" /></button>
                   </div>
                 </div>
+                <button onClick={() => onReflect(m)} class="mt-2 flex w-full items-center justify-between rounded-lg border border-emerald-700/50 bg-emerald-950/60 px-3 py-2 text-[11px] font-bold text-emerald-200">
+                  <span>Reflection & Jira</span>
+                  <span class={m.jira ? 'text-sky-300' : 'text-emerald-400'}>{m.jira ? `✓ ${m.jira.key}` : m.reflection ? 'not in Jira yet' : 'add reflection'}</span>
+                </button>
               </li>
             );
           })}
@@ -523,8 +577,8 @@ function HistoryView({ current, onToast }: { current: Match; onToast: (t: string
 
 /* ---------------- Modals ---------------- */
 
-function SetCompleteModal({ open, match, left, right, onNext, onUndo, onStats, onClose }: {
-  open: boolean; match: Match; left: PlayerKey; right: PlayerKey; onNext: () => void; onUndo: () => void; onStats: () => void; onClose: () => void;
+function SetCompleteModal({ open, match, left, right, onNext, onUndo, onStats, onReflect, onClose }: {
+  open: boolean; match: Match; left: PlayerKey; right: PlayerKey; onNext: () => void; onUndo: () => void; onStats: () => void; onReflect: () => void; onClose: () => void;
 }) {
   if (!open) return null;
   const s = currentSet(match);
@@ -546,7 +600,8 @@ function SetCompleteModal({ open, match, left, right, onNext, onUndo, onStats, o
         <div class="grid grid-cols-3"><span class="score font-bold text-emerald-400">{st.p1.winners}</span><span class="text-center text-slate-300">Winners</span><span class="score text-right font-bold text-emerald-400">{st.p2.winners}</span></div>
         <div class="grid grid-cols-3"><span class="score font-bold text-rose-400">{st.p1.unforcedErrors}</span><span class="text-center text-slate-300">Unforced errors</span><span class="score text-right font-bold text-rose-400">{st.p2.unforcedErrors}</span></div>
       </div>
-      <button onClick={onNext} class="w-full rounded-xl bg-sky-500 py-3 text-sm font-extrabold text-slate-950">{over ? 'View match stats' : `Start set ${match.currentSetIndex + 2}`}</button>
+      {over && <button onClick={onReflect} class="w-full rounded-xl bg-emerald-500 py-3 text-sm font-extrabold text-slate-950">Reflection & Save to Jira</button>}
+      <button onClick={onNext} class={`w-full rounded-xl py-3 text-sm font-extrabold ${over ? 'border border-slate-700 bg-slate-800 text-slate-200' : 'bg-sky-500 text-slate-950'}`}>{over ? 'View match stats' : `Start set ${match.currentSetIndex + 2}`}</button>
       <div class="grid grid-cols-2 gap-2">
         <button onClick={onUndo} class="rounded-xl border border-slate-700 bg-slate-800 py-2.5 text-xs font-bold text-amber-300">Undo last point</button>
         <button onClick={onStats} class="rounded-xl border border-slate-700 bg-slate-800 py-2.5 text-xs font-bold text-slate-200">Full stats</button>
@@ -555,15 +610,14 @@ function SetCompleteModal({ open, match, left, right, onNext, onUndo, onStats, o
   );
 }
 
-function SettingsModal({ open, match, prefs, onClose, onSave }: {
-  open: boolean; match: Match; prefs: Prefs; onClose: () => void; onSave: (meta: MatchMeta, bestOf: Match['bestOf'], keepAwake: boolean) => void;
+function SettingsModal({ open, match, onClose, onSave }: {
+  open: boolean; match: Match; onClose: () => void; onSave: (meta: MatchMeta, bestOf: Match['bestOf']) => void;
 }) {
   const [meta, setMeta] = useState<MatchMeta>(match.meta);
   const [bestOf, setBestOf] = useState(match.bestOf);
-  const [keepAwake, setKeepAwake] = useState(prefs.keepAwake);
   // Reset the draft each time the dialog opens: changes apply only on Save.
   useEffect(() => {
-    if (open) { setMeta(match.meta); setBestOf(match.bestOf); setKeepAwake(prefs.keepAwake); }
+    if (open) { setMeta(match.meta); setBestOf(match.bestOf); }
   }, [open]);
   const locked = hasAnyPoints(match);
   const inputClass = 'w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-base text-white outline-none focus:border-sky-400';
@@ -580,13 +634,14 @@ function SettingsModal({ open, match, prefs, onClose, onSave }: {
   return (
     <Modal open={open} onClose={onClose} title="Match setup">
       <div class="grid grid-cols-2 gap-2.5">
-        {field('p1Name', 'Player 1', { max: 24 })}
-        {field('p2Name', 'Player 2', { max: 24 })}
-        {field('p1Team', 'Team / club 1', { max: 32 })}
-        {field('p2Team', 'Team / club 2', { max: 32 })}
+        {field('p1Name', 'You', { max: 24 })}
+        {field('p2Name', 'Opponent', { max: 32 })}
+        {field('p1Team', 'Your club / team', { max: 32 })}
+        {field('p2Team', 'Opponent club / team', { max: 32 })}
         {field('matchDate', 'Date', { type: 'date' })}
-        {field('venue', 'Venue', { max: 40 })}
+        {field('p2Ttr', 'Opponent TTR', { max: 6 })}
       </div>
+      {field('venue', 'Venue', { max: 40 })}
       {field('league', 'League / competition', { max: 60 })}
       <div class="space-y-2">
         <span class="block text-xs font-bold uppercase tracking-wider text-slate-400">Format (11 points, win by 2)</span>
@@ -599,12 +654,8 @@ function SettingsModal({ open, match, prefs, onClose, onSave }: {
         </div>
         {locked && <p class="text-[11px] text-slate-500">Format is fixed once the first point is logged.</p>}
       </div>
-      <label class="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-sm">
-        <span>Keep screen on during play</span>
-        <input type="checkbox" checked={keepAwake} onChange={(e) => setKeepAwake((e.target as HTMLInputElement).checked)} class="h-5 w-5 accent-sky-500" />
-      </label>
       <button
-        onClick={() => onSave({ ...meta, p1Name: meta.p1Name.trim() || 'Player 1', p2Name: meta.p2Name.trim() || 'Player 2', matchDate: meta.matchDate || todayIso() }, bestOf, keepAwake)}
+        onClick={() => onSave({ ...meta, p1Name: meta.p1Name.trim() || 'Player 1', p2Name: meta.p2Name.trim() || 'Player 2', p2Ttr: meta.p2Ttr.trim(), matchDate: meta.matchDate || todayIso() }, bestOf)}
         class="w-full rounded-xl bg-sky-500 py-3 text-sm font-extrabold text-slate-950"
       >
         Save

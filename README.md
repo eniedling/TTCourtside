@@ -2,7 +2,7 @@
 
 Table tennis match and error tracker for the iPhone home screen. Works offline.
 
-**Version 0.1 (basic):** plan Phases 0 and 1. Save to Jira (TT1) follows in Phase 2.
+**Version 0.2:** live tracker, reflection and Save to Jira (TT1).
 
 ## What it does
 
@@ -13,6 +13,15 @@ Table tennis match and error tracker for the iPhone home screen. Works offline.
 - Stats per match or set: points, winners, errors, serve points won, point-by-point log
 - History of saved matches on the device; export CSV, JSON or a text report via the share sheet
 - Keeps the screen on during play (where the browser supports it)
+- **My details** (name, club) fill in player 1 for every new match; opponent club and TTR in match setup
+- **Reflection** after the match: the eight TT1 questions, concentration %, flow score, notes
+- **Save to Jira:** creates one TT1 issue per match (title `Club: Opponent (TTR)`, Spieltag, answers, result label, stats in the description). Saving again asks before updating the existing issue; it also checks for an issue for the same opponent and date
+- Jira link is configurable in Settings (site, project, issue type, labels, field IDs, test connection). The API token is stored only on the phone
+
+## Jira setup
+
+Jira blocks direct calls from web apps, so the app talks to Jira through a tiny relay you run for free on Cloudflare.
+See [relay/README.md](relay/README.md).
 
 ## Install on the iPhone
 

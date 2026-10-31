@@ -32,6 +32,43 @@ export interface MatchMeta {
   matchDate: string; // YYYY-MM-DD
   venue: string;
   league: string;
+  /** Opponent's TTR rating at match time (free text so "????" or empty is allowed). */
+  p2Ttr: string;
+}
+
+/** Post-match reflection: the eight TT1 questions plus extras. Player 1 is always "me". */
+export interface Reflection {
+  mood: string; // Stimmung
+  ownGame: string; // Eigenes Spiel
+  concentration: number | null; // Konzentration in %
+  concentrationNote: string;
+  motivation: string; // Motivation
+  opponentGame: string; // Gegner's Spiel
+  wentWell: string; // Was lief gut?
+  wentBadly: string; // Was lief nicht so gut?
+  improve: string; // Was kann ich verbessern?
+  flow: number | null; // 0-10
+  notes: string;
+}
+
+export const emptyReflection = (): Reflection => ({
+  mood: '',
+  ownGame: '',
+  concentration: null,
+  concentrationNote: '',
+  motivation: '',
+  opponentGame: '',
+  wentWell: '',
+  wentBadly: '',
+  improve: '',
+  flow: null,
+  notes: '',
+});
+
+export interface JiraLink {
+  key: string;
+  url: string;
+  savedAt: string;
 }
 
 export interface Match {
@@ -43,6 +80,8 @@ export interface Match {
   matchInitialServer: PlayerKey;
   currentSetIndex: number;
   sets: GameSet[];
+  reflection?: Reflection;
+  jira?: JiraLink;
 }
 
 export const other = (p: PlayerKey): PlayerKey => (p === 'p1' ? 'p2' : 'p1');
@@ -75,6 +114,7 @@ export function createMatch(meta?: Partial<MatchMeta>, bestOf: 3 | 5 | 7 = 5, fi
       matchDate: todayIso(),
       venue: '',
       league: '',
+      p2Ttr: '',
       ...meta,
     },
     bestOf,
@@ -265,3 +305,9 @@ export function stats(sets: GameSet[]): { totalPoints: number; p1: PlayerStats; 
 }
 
 export const pct = (a: number, b: number): number => (b > 0 ? Math.round((a / b) * 100) : 0);
+
+/** Fill in fields added in later versions so matches saved by older versions still load. */
+export function normalizeMatch(m: Match): Match {
+  const base = createMatch();
+  return { ...m, meta: { ...base.meta, ...m.meta } };
+}
