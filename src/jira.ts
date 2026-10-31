@@ -1,5 +1,7 @@
-// Jira Cloud integration for the TT1 journal. Calls go through a small relay (relay/worker.js)
-// because Jira Cloud sends no CORS headers, so Safari blocks direct calls from the app.
+// Jira Cloud integration for the TT1 journal.
+// Calls go straight from the phone to Atlassian's API gateway (api.atlassian.com/ex/jira/<cloudId>),
+// which allows browser calls, using a service account API token as a Bearer token.
+// (The site's own address, <site>.atlassian.net, blocks calls from web apps.)
 import { matchWinner, pct, setsWon, stats, type Match } from './engine';
 import type { JiraSettings } from './settings';
 
@@ -92,28 +94,21 @@ export function updateBody(m: Match, j: JiraSettings, now = new Date()) {
   return { fields: issueFields(m, j, now), ...(ops.length ? { update: { labels: ops } } : {}) };
 }
 
-function base64(s: string): string {
-  const bytes = new TextEncoder().encode(s);
-  let bin = '';
-  bytes.forEach((b) => (bin += String.fromCharCode(b)));
-  return btoa(bin);
-}
-
 async function call<T>(j: JiraSettings, method: string, path: string, body?: unknown): Promise<T> {
-  const url = `${j.relayUrl.trim().replace(/\/+$/, '')}/${cleanSite(j.site)}${path}`;
+  const url = `https://api.atlassian.com/ex/jira/${encodeURIComponent(j.cloudId.trim())}${path}`;
   let res: Response;
   try {
     res = await fetch(url, {
       method,
       headers: {
-        Authorization: `Basic ${base64(`${j.email.trim()}:${j.token.trim()}`)}`,
+        Authorization: `Bearer ${j.token.trim()}`,
         Accept: 'application/json',
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new JiraError(navigator.onLine === false ? 'You are offline.' : 'Could not reach the relay. Check the relay URL.');
+    throw new JiraError(navigator.onLine === false ? 'You are offline.' : 'Could not reach Jira. Check the connection and the Cloud ID.');
   }
   const text = await res.text();
   let data: unknown = null;
@@ -125,14 +120,22 @@ async function call<T>(j: JiraSettings, method: string, path: string, body?: unk
   if (!res.ok) {
     const d = data as { errorMessages?: string[]; errors?: Record<string, string>; message?: string } | null;
     const msgs = [...(d?.errorMessages ?? []), ...Object.entries(d?.errors ?? {}).map(([k, v]) => `${k}: ${v}`), ...(d?.message ? [d.message] : [])];
-    const hint = res.status === 401 ? 'Login failed: check email and API token.' : res.status === 403 ? 'No permission, or the relay refused the request.' : '';
+    const hint =
+      res.status === 401
+        ? 'Token rejected: check the token and its expiry date.'
+        : res.status === 403
+          ? 'No permission: the service account needs access to the project and the scopes read:jira-work and write:jira-work.'
+          : res.status === 404 && path.includes('/project/')
+            ? 'Project not found, or the service account cannot see it.'
+            : '';
     throw new JiraError([hint, ...msgs].filter(Boolean).join(' ') || `Jira returned ${res.status}`, res.status);
   }
   return data as T;
 }
 
 export async function testConnection(j: JiraSettings) {
-  const me = await call<{ displayName: string }>(j, 'GET', '/rest/api/2/myself');
+  // /myself needs the read:jira-user scope; treat it as optional.
+  const me = await call<{ displayName: string }>(j, 'GET', '/rest/api/2/myself').catch(() => ({ displayName: 'service account' }));
   const project = await call<{ name: string }>(j, 'GET', `/rest/api/2/project/${encodeURIComponent(j.projectKey)}`);
   const all = await call<{ id: string; name: string }[]>(j, 'GET', '/rest/api/2/field');
   const byId = new Map(all.map((f) => [f.id, f.name]));

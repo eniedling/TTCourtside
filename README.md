@@ -16,12 +16,22 @@ Table tennis match and error tracker for the iPhone home screen. Works offline.
 - **My details** (name, club) fill in player 1 for every new match; opponent club and TTR in match setup
 - **Reflection** after the match: the eight TT1 questions, concentration %, flow score, notes
 - **Save to Jira:** creates one TT1 issue per match (title `Club: Opponent (TTR)`, Spieltag, answers, result label, stats in the description). Saving again asks before updating the existing issue; it also checks for an issue for the same opponent and date
-- Jira link is configurable in Settings (site, project, issue type, labels, field IDs, test connection). The API token is stored only on the phone
+- Jira link is configurable in Settings (site, Cloud ID, project, issue type, labels, field IDs, test connection). The API token is stored only on the phone
 
 ## Jira setup
 
-Jira blocks direct calls from web apps, so the app talks to Jira through a tiny relay you run for free on Cloudflare.
-See [relay/README.md](relay/README.md).
+The app calls Jira directly through Atlassian's API gateway (`api.atlassian.com/ex/jira/<cloudId>`), which allows calls
+from web apps, using a **service account API token** (no personal login, no email).
+
+1. In **admin.atlassian.com → Directory → Service accounts**, create a service account (free plans include up to five).
+2. Give it access to Jira and to project **TT1** with permission to browse, create and edit issues
+   (e.g. add it to the project's Member role).
+3. On the service account choose **Create credentials → API token**, select the scopes
+   `read:jira-work` and `write:jira-work` (optional `read:jira-user`), set an expiry, and copy the token.
+4. In the app: **Settings → Jira connection**, paste the token, keep the pre-filled site and Cloud ID, tap
+   **Save settings**, then **Test connection**.
+
+Issues created this way show the service account as reporter. Tokens expire (at most after one year); create a new one then.
 
 ## Install on the iPhone
 

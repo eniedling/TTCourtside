@@ -13,10 +13,9 @@ export interface JiraFieldMap {
 }
 
 export interface JiraSettings {
-  site: string; // e.g. eniedling.atlassian.net
-  email: string;
-  token: string;
-  relayUrl: string; // Cloudflare Worker that forwards calls to Jira (Jira sends no CORS headers)
+  site: string; // e.g. eniedling.atlassian.net (used for "open in Jira" links)
+  cloudId: string; // Atlassian Cloud ID of the site; API calls go to api.atlassian.com/ex/jira/<cloudId>
+  token: string; // service account API token, sent as a Bearer token (no personal email needed)
   projectKey: string;
   issueTypeId: string;
   labelWin: string;
@@ -60,9 +59,8 @@ export const defaultSettings = (): AppSettings => ({
   myClub: '',
   jira: {
     site: 'eniedling.atlassian.net',
-    email: '',
+    cloudId: '39a9aad7-33ec-4517-abd1-5018051629c0',
     token: '',
-    relayUrl: '',
     projectKey: 'TT1',
     issueTypeId: '10006',
     labelWin: 'Gewonnen',
@@ -74,12 +72,12 @@ export const defaultSettings = (): AppSettings => ({
 export function normalizeSettings(s: Partial<AppSettings> | undefined): AppSettings {
   const d = defaultSettings();
   if (!s) return d;
-  return {
-    ...d,
-    ...s,
-    jira: { ...d.jira, ...(s.jira ?? {}), fields: { ...d.jira.fields, ...(s.jira?.fields ?? {}) } },
-  };
+  const j = { ...d.jira, ...(s.jira ?? {}), fields: { ...d.jira.fields, ...(s.jira?.fields ?? {}) } };
+  // Drop settings from v0.2 (email + relay), which are no longer used.
+  delete (j as Record<string, unknown>).email;
+  delete (j as Record<string, unknown>).relayUrl;
+  return { ...d, ...s, jira: j };
 }
 
 export const jiraConfigured = (j: JiraSettings): boolean =>
-  Boolean(j.site && j.email && j.token && j.relayUrl && j.projectKey && j.issueTypeId);
+  Boolean(j.site && j.cloudId && j.token && j.projectKey && j.issueTypeId);

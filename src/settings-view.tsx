@@ -66,21 +66,20 @@ export function SettingsView({ settings, keepAwake, onSave, onKeepAwake }: {
 
       <div class="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-4">
         <h2 class="text-xs font-bold uppercase tracking-wider text-emerald-400">Jira connection</h2>
-        <p class="text-[11px] text-slate-500">Save to Jira creates one issue per match in this project. The API token is stored only on this phone.</p>
+        <p class="text-[11px] text-slate-500">Save to Jira creates one issue per match in this project. It uses a service account API token, not your personal login. The token is stored only on this phone.</p>
         <Text label="Jira site" value={j.site} onInput={(v) => setJira({ site: v })} placeholder="yourname.atlassian.net" />
         <Text label="Project key" value={j.projectKey} onInput={(v) => setJira({ projectKey: v.toUpperCase() })} />
-        <Text label="Jira login email" type="email" value={j.email} onInput={(v) => setJira({ email: v })} />
         <div class="space-y-1">
           <Text
-            label="API token"
+            label="Service account API token"
             type={showToken ? 'text' : 'password'}
             value={j.token}
             onInput={(v) => setJira({ token: v })}
-            hint="Create one at id.atlassian.com → Security → API tokens."
+            hint="admin.atlassian.com → Directory → Service accounts → Create credentials → API token. Scopes: read:jira-work, write:jira-work (optional: read:jira-user)."
           />
           <button class="text-[11px] font-bold text-sky-400" onClick={() => setShowToken(!showToken)}>{showToken ? 'Hide token' : 'Show token'}</button>
         </div>
-        <Text label="Relay URL" type="url" value={j.relayUrl} onInput={(v) => setJira({ relayUrl: v.trim() })} placeholder="https://tt-relay.<you>.workers.dev" hint="Your Cloudflare Worker (see relay/README.md in the repo). Jira blocks direct calls from web apps." />
+        <Text label="Cloud ID" value={j.cloudId} onInput={(v) => setJira({ cloudId: v.trim() })} hint="The ID of your Jira site (pre-filled for eniedling.atlassian.net). In admin.atlassian.com it is the part after /s/ in the address." />
         <details class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
           <summary class="cursor-pointer text-xs font-bold text-slate-300">Advanced: issue type, labels, field IDs</summary>
           <div class="mt-3 space-y-3">
@@ -127,7 +126,7 @@ export function SettingsView({ settings, keepAwake, onSave, onKeepAwake }: {
 
       <div class="fixed inset-x-0 bottom-[calc(var(--sab)+3.75rem)] z-30 px-3">
         <button
-          onClick={() => onSave({ ...draft, myName: draft.myName.trim(), myClub: draft.myClub.trim(), jira: { ...j, site: j.site.trim(), email: j.email.trim(), token: j.token.trim() } })}
+          onClick={() => onSave({ ...draft, myName: draft.myName.trim(), myClub: draft.myClub.trim(), jira: { ...j, site: j.site.trim(), cloudId: j.cloudId.trim(), token: j.token.trim() } })}
           disabled={!dirty}
           class="w-full rounded-xl bg-sky-500 py-3 text-sm font-extrabold text-slate-950 shadow-xl disabled:bg-slate-800 disabled:text-slate-500"
         >
