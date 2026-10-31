@@ -1,0 +1,70 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  color-scheme: dark;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  background: #090d16;
+  color: #f8fafc;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.score {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.press {
+  transition: transform 80ms ease, filter 120ms ease;
+}
+.press:active {
+  transform: scale(0.96);
+  filter: brightness(1.18);
+}
+
+@keyframes bump {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.18); color: #38bdf8; }
+  100% { transform: scale(1); }
+}
+.bump {
+  animation: bump 0.28s ease-out;
+}
+
+@keyframes pulse-serve {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.12); opacity: 0.8; }
+}
+.serve-badge {
+  animation: pulse-serve 2s infinite ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bump, .serve-badge { animation: none; }
+}
+
+/* Short screens (e.g. Safari with toolbars): drop decorative icons so the tap targets fit. */
+@media (max-height: 720px) {
+  .short-hide { display: none; }
+}
